@@ -54,8 +54,8 @@ INCLUDES  := $(addprefix -I,$(SRC_DIR))
 INCLUDES  += -I$(SRCDIR)/include
 
 # reserve 2MB for user app
-USER_APPLIST     := pwd cat sh ls forktest yield hello faultreadkernel faultread badarg pgdir exit sleep
-INITRD_BLOCK_CNT := 4000 
+USER_APPLIST     := cat sh ls forktest yield faultreadkernel faultread pgdir sleep
+INITRD_BLOCK_CNT := 2000 
 
 ifeq  ($(ON_FPGA), y)
 FPGA_LD_FLAGS += -S

@@ -424,41 +424,65 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
         goto fork_out;
     }
     ret = -E_NO_MEM;
-    //LAB4:EXERCISE2 2009010989
-    if ((proc = alloc_proc()) == NULL) {
-        goto fork_out;
-    }
+    //LAB4:EXERCISE2 2016010981
+    //LAB8:EXERCISE2 2016010981  HINT:how to copy the fs in parent's proc_struct?
+    /*
+     * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
+     * MACROs or Functions:
+     *   alloc_proc:   create a proc struct and init fields (lab4:exercise1)
+     *   setup_kstack: alloc pages with size KSTACKPAGE as process kernel stack
+     *   copy_mm:      process "proc" duplicate OR share process "current"'s mm according clone_flags
+     *                 if clone_flags & CLONE_VM, then "share" ; else "duplicate"
+     *   copy_thread:  setup the trapframe on the  process's kernel stack top and
+     *                 setup the kernel entry point and stack of process
+     *   hash_proc:    add proc into proc hash_list
+     *   get_pid:      alloc a unique pid for process
+     *   wakeup_proc:  set proc->state = PROC_RUNNABLE
+     * VARIABLES:
+     *   proc_list:    the process set's list
+     *   nr_process:   the number of process set
+     */
 
+    proc = alloc_proc();                     //    1. call alloc_proc to allocate a proc_struct
+    if (proc == NULL) goto fork_out;
+    assert(current->wait_state == 0);
     proc->parent = current;
 
-    if(setup_kstack(proc)){
-        goto bad_fork_cleanup_proc;
+    ret = setup_kstack(proc);                //    2. call setup_kstack to allocate a kernel stack for child process
+    if (ret != 0) goto bad_fork_cleanup_proc;
+
+    ret = copy_fs(clone_flags, proc);     //    2.5. call copy_fs to copy opened files to child process
+    if (ret != 0) goto bad_fork_cleanup_kstack;
+
+    ret = copy_mm(clone_flags, proc);        //    3. call copy_mm to dup OR share mm according clone_flag
+    if (ret != 0) goto bad_fork_cleanup_fs;
+
+    copy_thread(proc, stack, tf);            //    4. call copy_thread to setup tf & context in proc_struct
+
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    {
+        proc->pid = get_pid();
+        hash_proc(proc);                     //    5. insert proc_struct into hash_list && proc_list
+        set_links(proc);
     }
-    //LAB8:EXERCISE2 2009010989 HINT:how to copy the fs in parent's proc_struct?
-    if (copy_fs(clone_flags, proc) != 0) {
-        goto bad_fork_cleanup_kstack;
-    }
-    if (copy_mm(clone_flags, proc)){
-        goto bad_fork_cleanup_fs;
-    }
+    local_intr_restore(intr_flag);
+    
+    wakeup_proc(proc);                       //    6. call wakeup_proc to make the new child process RUNNABLE
+    ret = proc->pid;                         //    7. set ret vaule using child proc's pid
 
-    copy_thread(proc, (uint32_t)stack, tf);
-
-    proc->pid = get_pid();
-    hash_proc(proc);
-
-
-    //list_add(&proc_list, &(proc->list_link));
-    set_links(proc);
-
-    wakeup_proc(proc);
-
-    ret = proc->pid;
-
+	//LAB5 2016010981 : (update LAB4 steps)
+   /* Some Functions
+    *    set_links:  set the relation links of process.  ALSO SEE: remove_links:  lean the relation links of process 
+    *    -------------------
+	*    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
+	*    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
+    */
+	
 fork_out:
     return ret;
 
-bad_fork_cleanup_fs:
+bad_fork_cleanup_fs:  //for LAB8
     put_fs(proc);
 bad_fork_cleanup_kstack:
     put_kstack(proc);
@@ -466,6 +490,7 @@ bad_fork_cleanup_proc:
     kfree(proc);
     goto fork_out;
 }
+
 
 // do_exit - called by sys_exit
 //   1. call exit_mmap & put_pgdir & mm_destroy to free the almost all memory space of process

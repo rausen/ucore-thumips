@@ -39,6 +39,7 @@
 
 typedef uintptr_t pte_t;
 typedef uintptr_t pde_t;
+typedef pte_t swap_entry_t; //lab3: the pte can also be a swap entry
 
 
 /* *
@@ -54,6 +55,9 @@ struct Page {
     list_entry_t page_link;         // free list link
 //    swap_entry_t index;             // stores a swapped-out page identifier
     list_entry_t swap_link;         // swap hash link
+	
+	list_entry_t pra_page_link;     // lab3: used for pra (page replace algorithm)
+    uintptr_t pra_vaddr;            // lab3: used for pra (page replace algorithm)
 };
 
 /* Flags describing the status of a page frame */

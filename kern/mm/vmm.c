@@ -7,6 +7,7 @@
 #include <error.h>
 #include <kmalloc.h>
 #include <pmm.h>
+#include <swap.h>
 #include <thumips_tlb.h>
 
 /* 
@@ -39,24 +40,24 @@ static void check_vmm(void);
 static void check_vma_struct(void);
 static void check_pgfault(void);
 
-int swap_init_ok = 0;
 // mm_create -  alloc a mm_struct & initialize it.
 struct mm_struct *
 mm_create(void) {
-  struct mm_struct *mm = kmalloc(sizeof(struct mm_struct));
+    struct mm_struct *mm = kmalloc(sizeof(struct mm_struct));
 
-  if (mm != NULL) {
-    list_init(&(mm->mmap_list));
-    mm->mmap_cache = NULL;
-    mm->pgdir = NULL;
-    mm->map_count = 0;
+    if (mm != NULL) {
+        list_init(&(mm->mmap_list));
+        mm->mmap_cache = NULL;
+        mm->pgdir = NULL;
+        mm->map_count = 0;
 
-    mm->sm_priv = NULL;
-
-    set_mm_count(mm, 0);
-    sem_init(&(mm->mm_sem), 1);
-  }	
-  return mm;
+        if (swap_init_ok) swap_init_mm(mm);
+        else mm->sm_priv = NULL;
+        
+        set_mm_count(mm, 0);
+        sem_init(&(mm->mm_sem), 1);
+    }    
+    return mm;
 }
 
 // vma_create - alloc a vma_struct & initialize it. (addr range: vm_start~vm_end)
@@ -364,73 +365,121 @@ volatile unsigned int pgfault_num=0;
 // do_pgfault - interrupt handler to process the page fault execption
 int
 do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
-  int ret = -E_INVAL;
-  struct vma_struct *vma = find_vma(mm, addr);
-  //kprintf("## %08x %08x\n", error_code, addr);
+    int ret = -E_INVAL;
+    //try to find a vma which include addr
+    struct vma_struct *vma = find_vma(mm, addr);
 
-  pgfault_num++;
-  if (vma == NULL || vma->vm_start > addr) {
-    kprintf("not valid addr %x, and  can not find it in vma\n", addr);
-    goto failed;
-  }
-
-  switch (error_code & 3) {
-    default:
-      /* default is 3: write, present */
-    case 2: /* write, not present */
-      if (!(vma->vm_flags & VM_WRITE)) {
-        kprintf("write, not present in do_pgfault failed\n");
+    pgfault_num++;
+    //If the addr is in the range of a mm's vma?
+    if (vma == NULL || vma->vm_start > addr) {
+        kprintf("not valid addr %x, and  can not find it in vma\n", addr);
         goto failed;
-      }
-      break;
-    case 1: /* read, present */
-      kprintf("read, present in do_pgfault failed\n");
-      goto failed;
-    case 0: /* read, not present */
-      if (!(vma->vm_flags & (VM_READ | VM_EXEC))) {
-        kprintf("read, not present in do_pgfault failed\n");
-        goto failed;
-      }
-  }
-
-  //kprintf("## check OK\n");
-
-  uint32_t perm = PTE_U;
-  if (vma->vm_flags & VM_WRITE) {
-    perm |= PTE_W;
-  }
-  addr = ROUNDDOWN_2N(addr, PGSHIFT);
-
-  ret = -E_NO_MEM;
-
-
-
-  // try to find a pte, if pte's PT(Page Table) isn't existed, then create a PT.
-  pte_t *ptep=NULL;
-  if ((ptep = get_pte(mm->pgdir, addr, 1)) == NULL) {
-    goto failed;
-  }
-
-  if (*ptep == 0) { // if the phy addr isn't exist, then alloc a page & map the phy addr with logical addr
-    if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL) {
-      goto failed;
     }
-  }
-  else { // if this pte is a swap entry, then load data from disk to a page with phy addr, 
-    // map the phy addr with logical addr, trig swap manager to record the access situation of this page
-    if(swap_init_ok) {
-      panic("No swap!! never reach!!"); 
+    //check the error_code
+    switch (error_code & 3) {
+    default:
+            /* error code flag : default is 3 ( W/R=1, P=1): write, present */
+    case 2: /* error code flag : (W/R=1, P=0): write, not present */
+        if (!(vma->vm_flags & VM_WRITE)) {
+            kprintf("do_pgfault failed: error code flag = write AND not present, but the addr's vma cannot write\n");
+            goto failed;
+        }
+        break;
+    case 1: /* error code flag : (W/R=0, P=1): read, present */
+        kprintf("do_pgfault failed: error code flag = read AND present\n");
+        goto failed;
+    case 0: /* error code flag : (W/R=0, P=0): read, not present */
+        if (!(vma->vm_flags & (VM_READ | VM_EXEC))) {
+            kprintf("do_pgfault failed: error code flag = read AND not present, but the addr's vma cannot read or exec\n");
+            goto failed;
+        }
+    }
+    /* IF (write an existed addr ) OR
+     *    (write an non_existed addr && addr is writable) OR
+     *    (read  an non_existed addr && addr is readable)
+     * THEN
+     *    continue process
+     */
+    uint32_t perm = PTE_U;
+    if (vma->vm_flags & VM_WRITE) {
+        perm |= PTE_W;
+    }
+    addr = ROUNDDOWN_2N(addr, PGSIZE);
+
+    ret = -E_NO_MEM;
+
+    pte_t *ptep=NULL;
+    /*LAB3 EXERCISE 1: 2016010981
+    * Maybe you want help comment, BELOW comments can help you finish the code
+    *
+    * Some Useful MACROs and DEFINEs, you can use them in below implementation.
+    * MACROs or Functions:
+    *   get_pte : get an pte and return the kernel virtual address of this pte for la
+    *             if the PT contians this pte didn't exist, alloc a page for PT (notice the 3th parameter '1')
+    *   pgdir_alloc_page : call alloc_page & page_insert functions to allocate a page size memory & setup
+    *             an addr map pa<--->la with linear address la and the PDT pgdir
+    * DEFINES:
+    *   VM_WRITE  : If vma->vm_flags & VM_WRITE == 1/0, then the vma is writable/non writable
+    *   PTE_W           0x002                   // page table/directory entry flags bit : Writeable
+    *   PTE_U           0x004                   // page table/directory entry flags bit : User can access
+    * VARIABLES:
+    *   mm->pgdir : the PDT of these vma
+    *
+    */
+
+    /*LAB3 EXERCISE 1: 2016010981*/
+    ptep = get_pte(mm->pgdir, addr, 1);           //(1) try to find a pte, if pte's PT(Page Table) isn't existed, then create a PT.
+    if (ptep == NULL) {
+        kprintf("get_pte in do_pgfault failed\n");
+        goto failed;
+    }
+    if (*ptep == 0) {
+        struct Page *p = pgdir_alloc_page(mm->pgdir, addr, perm);  //(2) if the phy addr isn't exist, then alloc a page & map the phy addr with logical addr
+        if (p == NULL) {
+            kprintf("pgdir_alloc_page in do_pgfault failed\n");
+            goto failed;
+        }
     }
     else {
-      kprintf("no swap_init_ok but ptep is %x, failed\n",*ptep);
-      goto failed;
-    }
-  }
-  /* refill TLB for mips, no second exception */
-  //tlb_refill(addr, ptep);
-  ret = 0;
+    /*LAB3 EXERCISE 2: 2016010981
+    * Now we think this pte is a  swap entry, we should load data from disk to a page with phy addr,
+    * and map the phy addr with logical addr, trigger swap manager to record the access situation of this page.
+    *
+    *  Some Useful MACROs and DEFINEs, you can use them in below implementation.
+    *  MACROs or Functions:
+    *    swap_in(mm, addr, &page) : alloc a memory page, then according to the swap entry in PTE for addr,
+    *                               find the addr of disk page, read the content of disk page into this memroy page
+    *    page_insert ： build the map of phy addr of an Page with the linear addr la
+    *    swap_map_swappable ： set the page swappable
+    */
+    /*
+     * LAB5 CHALLENGE ( the implmentation Copy on Write)
+		There are 2 situlations when code comes here.
+		  1) *ptep & PTE_P == 1, it means one process try to write a readonly page. 
+		     If the vma includes this addr is writable, then we can set the page writable by rewrite the *ptep.
+		     This method could be used to implement the Copy on Write (COW) thchnology(a fast fork process method).
+		  2) *ptep & PTE_P == 0 & but *ptep!=0, it means this pte is a  swap entry.
+		     We should add the LAB3's results here.
+     */
+        if(swap_init_ok) {
+            struct Page *page=NULL;
+            ret = swap_in(mm, addr, &page);            //(1）According to the mm AND addr, try to load the content of right disk page
+            if (ret != 0) {                            //    into the memory which page managed.
+                kprintf("swap_in in do_pgfault failed\n");
+                goto failed;
+            }                                           
+            page_insert(mm->pgdir, page, addr, perm);  //(2) According to the mm, addr AND page, setup the map of phy addr <---> logical addr
+            swap_map_swappable(mm, addr, page, 1);     //(3) make the page swappable.
+            page->pra_vaddr = addr;
+        }
+        else {
+            kprintf("no swap_init_ok but ptep is %x, failed\n",*ptep);
+            goto failed;
+        }
+   }
+   ret = 0;
 failed:
-  return ret;
+    return ret;
 }
 
 

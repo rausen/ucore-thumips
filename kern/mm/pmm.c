@@ -6,6 +6,7 @@
 #include <memlayout.h>
 #include <pmm.h>
 #include <buddy_pmm.h>
+#include <default_pmm.h>
 #include <sync.h>
 #include <error.h>
 
@@ -41,7 +42,7 @@ void lcr3(uintptr_t cr3)
 //init_pmm_manager - initialize a pmm_manager instance
 static void
 init_pmm_manager(void) {
-    pmm_manager = &buddy_pmm_manager;
+    pmm_manager = &default_pmm_manager; // ucore_mips lab2: buddy_pmm_manager -> default_pmm_manager
     kprintf("memory management: ");
       kprintf(pmm_manager->name);
       kprintf("\n");

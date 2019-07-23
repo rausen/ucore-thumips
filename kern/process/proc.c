@@ -690,17 +690,7 @@ load_icode(int fd, int argc, char **kargv) {
     current->cr3 = PADDR(mm->pgdir);
     lcr3(PADDR(mm->pgdir));
 
-    //LAB5:EXERCISE1 2009010989
-    // should set cs,ds,es,ss,esp,eip,eflags
-#if 0
-    tf->tf_cs = USER_CS;
-    tf->tf_ds = tf->tf_es = USER_DS;
-    tf->tf_ss = USER_DS;
-    tf->tf_esp = USTACKTOP;
-    tf->tf_eip = elf->e_entry;
-    tf->tf_eflags = FL_IF;
-#endif
-	  uintptr_t stacktop = USTACKTOP - argc * PGSIZE;
+    uintptr_t stacktop = USTACKTOP - argc * PGSIZE;
     char **uargv = (char **)(stacktop - argc * sizeof(char *));
     int i;
     for (i = 0; i < argc; i ++) {

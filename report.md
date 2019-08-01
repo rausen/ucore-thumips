@@ -29,13 +29,13 @@ lab3主要要求实现**LILO**页面替换算法，对相关缺页异常进行�
 
 新添加了`swap.c`, `swap.h`, `swap_fifo.c`, `swap_fifo.h`, `swapfs.c`, `swapfs.h`，并且修改了`vmm.c`的页替换算法为**swap**
 
-# lab4
+## lab4
 
 lab4主要要求实现创建一个进程并且给其分配资源
 
 主要修改的是`proc.c`内的函数，初始化没有修改必要，`do_fork()`函数改成了自己的fork函数，但是没有本质区别，暂时没有修改`load_icode()`函数，因为ucore-mips32和ucore-os的差别比较大，修改起来难度较大，而且lab6,8还会进行改动
 
-# lab5
+## lab5
 
 lab5主要要求在`proc.c`中加载程序并执行，并且实现父进程复制自己的内存空间给子进程
 

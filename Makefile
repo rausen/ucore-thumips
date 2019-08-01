@@ -1,4 +1,5 @@
 ON_FPGA :=n
+
 CROSS_COMPILE ?= mipsel-linux-gnu-
 
 # eliminate default suffix rules
@@ -54,6 +55,7 @@ INCLUDES  += -I$(SRCDIR)/include
 
 # reserve 2MB for user app
 USER_APPLIST     := pwd cat sh ls forktest yield hello faultreadkernel faultread badarg pgdir exit sleep
+MY_APPLIST      := pwd cat sh ls forktest yield hello faultreadkernel faultread badarg pgdir exit sleep my_test
 INITRD_BLOCK_CNT := 4000 
 
 ifeq  ($(ON_FPGA), y)
@@ -69,6 +71,8 @@ USER_LIB_OBJDIR := $(USER_OBJDIR)/libs
 USER_INCLUDE := -I$(USER_SRCDIR)/libs
 
 USER_APP_BINS:= $(addprefix $(USER_OBJDIR)/, $(USER_APPLIST))
+MY_APP_BINS  := $(addprefix $(USER_OBJDIR)/, $(MY_APPLIST))
+
 
 USER_LIB_SRCDIR := $(USER_SRCDIR)/libs
 USER_LIB_SRC := $(foreach sdir,$(USER_LIB_SRCDIR),$(wildcard $(sdir)/*.c))
@@ -166,10 +170,10 @@ ROOTFS_IMG:= $(USER_OBJDIR)/initrd.img
 $(TOOL_MKSFS): tools/mksfs.c
 	$(HOSTCC) $(HOSTCFLAGS) -o $@ $^
 
-$(OBJDIR)/ucore-kernel-initrd: $(BUILD_DIR) $(TOOL_MKSFS) $(OBJ) $(USER_APP_BINS) tools/kernel.ld
+$(OBJDIR)/ucore-kernel-initrd: $(BUILD_DIR) $(TOOL_MKSFS) $(OBJ) $(MY_APP_BINS) tools/kernel.ld
 	rm -rf $(ROOTFS_DIR) $(ROOTFS_IMG)
 	mkdir $(ROOTFS_DIR)
-	cp $(USER_APP_BINS) $(ROOTFS_DIR)
+	cp $(MY_APP_BINS) $(ROOTFS_DIR)
 	cp -r $(USER_SRCDIR)/_archive/* $(ROOTFS_DIR)/
 	dd if=/dev/zero of=$(ROOTFS_IMG) count=$(INITRD_BLOCK_CNT)
 	$(TOOL_MKSFS) $(ROOTFS_IMG) $(ROOTFS_DIR)
